@@ -1,0 +1,58 @@
+# Python virtual environment
+venv/
+ENV/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data files
+# Uncomment these lines if you want to exclude large data files
+# data/raw/*
+# data/processed/*
+# Keep directory structure with empty .gitkeep files
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# NBA API cache
+.nba_api/
+
+# VS Code specific files
+.vscode/
+*.code-workspace
+
+# Mac OS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Environment variables and secrets
+.env
+*.env
+credentials.json
+
+# Logs and local configuration
+logs/
+*.log
+local_config.py
