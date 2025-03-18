@@ -14,43 +14,98 @@ from nba_api.stats.endpoints import leaguegamefinder
 
 def get_complete_season_games(season):
     """
-    Retrieve complete game data for a specific NBA season.
+    Retrieve complete game data for a specific NBA season, including playoffs.
     
     Args:
         season (str): Season in format 'YYYY-YY' (e.g., '2022-23')
     
     Returns:
-        pandas.DataFrame: Complete data for the season
+        pandas.DataFrame: Complete data for the season, or None if collection fails
     """
     print(f"Collecting data for season {season}...")
     
-    # Collect data for each conference to ensure completeness
     all_data = []
     
+    # Collect regular season games
     for conference in ['East', 'West']:
-        gamefinder = leaguegamefinder.LeagueGameFinder(
-            season_nullable=season,
-            league_id_nullable='00',  # NBA league ID
-            conference_nullable=conference
-        )
-        
-        # Get the game data
-        conf_df = gamefinder.get_data_frames()[0]
-        print(f"  - Retrieved {len(conf_df)} {conference}ern Conference game records")
-        all_data.append(conf_df)
+        try:
+            print(f"  - Collecting Regular Season games for {conference}ern Conference...")
+            gamefinder = leaguegamefinder.LeagueGameFinder(
+                season_nullable=season,
+                season_type_nullable='Regular Season',  # This is the correct parameter
+                league_id_nullable='00',
+                conference_nullable=conference
+            )
+            
+            if gamefinder.get_data_frames():
+                conf_df = gamefinder.get_data_frames()[0]
+                if not conf_df.empty:
+                    print(f"    - Retrieved {len(conf_df)} {conference}ern Conference Regular Season records")
+                    all_data.append(conf_df)
+                else:
+                    print(f"    - No Regular Season data returned for {conference}ern Conference")
+            else:
+                print(f"    - Empty data frames returned for {conference}ern Conference")
+                
+        except Exception as e:
+            print(f"    - Error retrieving {conference}ern Conference Regular Season data: {e}")
         
         # Add pause to avoid API rate limits
-        time.sleep(1)
+        time.sleep(2)
     
-    # Combine all data
-    combined_df = pd.concat(all_data, ignore_index=True)
-    combined_df['SEASON'] = season  # Add season identifier
+    # Collect playoff games
+    for conference in ['East', 'West']:
+        try:
+            print(f"  - Collecting Playoff games for {conference}ern Conference...")
+            gamefinder = leaguegamefinder.LeagueGameFinder(
+                season_nullable=season,
+                season_type_nullable='Playoffs',  # This is the correct parameter
+                league_id_nullable='00',
+                conference_nullable=conference
+            )
+            
+            if gamefinder.get_data_frames():
+                playoff_df = gamefinder.get_data_frames()[0]
+                if not playoff_df.empty:
+                    print(f"    - Retrieved {len(playoff_df)} {conference}ern Conference Playoff records")
+                    
+                    # Verify these are actual playoff games by checking the GAME_ID prefix
+                    playoff_games = playoff_df[playoff_df['GAME_ID'].astype(str).str.startswith('004')]
+                    if len(playoff_games) > 0:
+                        print(f"    - Confirmed {len(playoff_games)} valid playoff games")
+                        all_data.append(playoff_games)
+                    else:
+                        print(f"    - No valid playoff games found - check game IDs")
+                else:
+                    print(f"    - No Playoff data returned for {conference}ern Conference")
+            else:
+                print(f"    - Empty data frames returned for {conference}ern Conference playoffs")
+                
+        except Exception as e:
+            print(f"    - Error retrieving {conference}ern Conference Playoff data: {e}")
+        
+        # Add pause to avoid API rate limits
+        time.sleep(2)
     
-    # Report counts
-    unique_games = combined_df['GAME_ID'].nunique()
-    print(f"  - Total: {len(combined_df)} team records representing {unique_games} unique games")
-    
-    return combined_df
+    # Combine all collected data
+    if all_data:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        combined_df['SEASON'] = season  # Add season identifier
+        
+        # Report counts
+        unique_games = combined_df['GAME_ID'].nunique()
+        print(f"  - Total: {len(combined_df)} team records representing {unique_games} unique games")
+        
+        # Report counts by game type
+        regular_season = combined_df[combined_df['GAME_ID'].astype(str).str.startswith('002')]
+        playoffs = combined_df[combined_df['GAME_ID'].astype(str).str.startswith('004')]
+        print(f"    - Regular season: {len(regular_season)} records ({regular_season['GAME_ID'].nunique()} games)")
+        print(f"    - Playoffs: {len(playoffs)} records ({playoffs['GAME_ID'].nunique()} games)")
+        
+        return combined_df
+    else:
+        print(f"  - No data could be collected for season {season}")
+        return None
 
 def clean_nba_data(games_df):
     """
@@ -97,21 +152,29 @@ def clean_nba_data(games_df):
     games_df = games_df[team_mask].copy()
     print(f"After filtering non-NBA teams: {len(games_df)} records")
     
-    
-    # Step 2: Extract game type from GAME_ID prefix
+    # Step 2: Extract game type from GAME_ID prefix and add SEASON_TYPE column
     games_df['GAME_TYPE'] = games_df['GAME_ID'].astype(str).str[:3]
+    
+    # Add explicit season type column for clarity
+    games_df['SEASON_TYPE'] = 'Unknown'
+    games_df.loc[games_df['GAME_TYPE'] == '002', 'SEASON_TYPE'] = 'Regular Season'
+    games_df.loc[games_df['GAME_TYPE'] == '004', 'SEASON_TYPE'] = 'Playoffs'
     
     # Print distribution of game types to verify our understanding
     print("\nGame type distribution based on GAME_ID prefix:")
     game_type_counts = games_df['GAME_TYPE'].value_counts()
     print(game_type_counts)
     
+    print("\nSeason type distribution:")
+    season_type_counts = games_df['SEASON_TYPE'].value_counts()
+    print(season_type_counts)
+    
     # Step 3: Filter to keep only regular season (002) and playoff (004) games
     valid_game_types = ['002', '004']
     games_df = games_df[games_df['GAME_TYPE'].isin(valid_game_types)].copy()
     print(f"After filtering by game type prefix: {len(games_df)} records")
     
-    # Step 4: Additional safety check for exhibition games (redundant but thorough)
+    # Step 4: Additional safety check for exhibition games
     exhibition_keywords = ['all-star', 'all star', 'rising stars', 'celebrity']
     matchup_mask = ~games_df['MATCHUP'].str.lower().str.contains('|'.join(exhibition_keywords), na=False)
     games_df = games_df[matchup_mask].copy()
@@ -121,8 +184,8 @@ def clean_nba_data(games_df):
     games_df = games_df[games_df['PTS'] > 0].copy()
     print(f"After removing zero-point games: {len(games_df)} records")
     
-    # Drop temporary columns
-    games_df = games_df.drop(columns=['GAME_TYPE'])
+    # Keep GAME_TYPE for reference and analysis, but drop if needed
+    # games_df = games_df.drop(columns=['GAME_TYPE'])
     
     return games_df
 
@@ -130,14 +193,17 @@ def standardize_team_names(games_df):
     """
     Standardize team names for consistency across the dataset.
     Specifically addresses the Lakers/Clippers naming inconsistency.
+    
+    Args:
+        games_df (pandas.DataFrame): Game data
+        
+    Returns:
+        pandas.DataFrame: Data with standardized team names
     """
     # Create a copy to avoid warnings
     games_df = games_df.copy()
     
-    # Option 1: Standardize to full city names
-    # games_df['TEAM_NAME'] = games_df['TEAM_NAME'].replace('LA Clippers', 'Los Angeles Clippers')
-    
-    # Option 2: Standardize to abbreviated city names (probably better)
+    # Standardize to abbreviated city names
     games_df['TEAM_NAME'] = games_df['TEAM_NAME'].replace('Los Angeles Lakers', 'LA Lakers')
     
     print(f"Standardized team names for consistency")
@@ -221,39 +287,45 @@ def main():
     for season in seasons:
         try:
             season_data = get_complete_season_games(season)
-            all_seasons_data.append(season_data)
+            if season_data is not None and not season_data.empty:
+                all_seasons_data.append(season_data)
+                print(f"Successfully collected data for season {season}")
+            else:
+                print(f"No data collected for season {season}, skipping...")
         except Exception as e:
             print(f"Error collecting data for season {season}: {e}")
     
-    # Combine all seasons
-    if all_seasons_data:
-        print("\nCombining data from all seasons...")
-        all_games_df = pd.concat(all_seasons_data, ignore_index=True)
-        all_games_df = standardize_team_names(all_games_df)
+    # Handle the case where we collected no data
+    if not all_seasons_data:
+        print("No data was collected for any season. Exiting.")
+        return
     
-        print(f"Combined dataset: {len(all_games_df)} records")
-        
-        # Save raw data
-        raw_dir = 'data/raw'
-        os.makedirs(raw_dir, exist_ok=True)
-        raw_file = os.path.join(raw_dir, f"nba_games_raw_{timestamp}.csv")
-        all_games_df.to_csv(raw_file, index=False)
-        print(f"Raw data saved to: {raw_file}")
-        
-        # Step 2: Clean the data
-        cleaned_df = clean_nba_data(all_games_df)
-        
-        # Step 3: Validate the data
-        validate_data(cleaned_df)
-        
-        # Step 4: Save the cleaned data
-        processed_dir = 'data/processed'
-        os.makedirs(processed_dir, exist_ok=True)
-        cleaned_file = os.path.join(processed_dir, f"nba_games_clean_{timestamp}.csv")
-        cleaned_df.to_csv(cleaned_file, index=False)
-        print(f"\nCleaned data saved to: {cleaned_file}")
-    else:
-        print("No data was collected. Please check for errors.")
+    # Combine all seasons
+    print("\nCombining data from all seasons...")
+    all_games_df = pd.concat(all_seasons_data, ignore_index=True)
+    all_games_df = standardize_team_names(all_games_df)
+    
+    print(f"Combined dataset: {len(all_games_df)} records")
+    
+    # Save raw data
+    raw_dir = 'data/raw'
+    os.makedirs(raw_dir, exist_ok=True)
+    raw_file = os.path.join(raw_dir, f"nba_games_raw_{timestamp}.csv")
+    all_games_df.to_csv(raw_file, index=False)
+    print(f"Raw data saved to: {raw_file}")
+    
+    # Step 2: Clean the data
+    cleaned_df = clean_nba_data(all_games_df)
+    
+    # Step 3: Validate the data
+    validate_data(cleaned_df)
+    
+    # Step 4: Save the cleaned data
+    processed_dir = 'data/processed'
+    os.makedirs(processed_dir, exist_ok=True)
+    cleaned_file = os.path.join(processed_dir, f"nba_games_clean_{timestamp}.csv")
+    cleaned_df.to_csv(cleaned_file, index=False)
+    print(f"\nCleaned data saved to: {cleaned_file}")
     
     print("\nNBA Game Data Collection and Cleaning Completed")
 
