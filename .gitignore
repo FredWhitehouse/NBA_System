@@ -56,3 +56,6 @@ credentials.json
 logs/
 *.log
 local_config.py
+
+# Archived files
+archive/
